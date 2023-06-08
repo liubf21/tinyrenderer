@@ -9,7 +9,7 @@ struct IShader {
     static TGAColor sample2D(const TGAImage &img, vec2 &uvf) {
         return img.get(uvf[0] * img.width(), uvf[1] * img.height());
     }
-    virtual bool fragment(const vec3 bar, TGAColor &color) = 0;
+    virtual bool fragment(const vec2,const vec3 bar, TGAColor &color) = 0;
 };
 
 void triangle(const vec4 clip_verts[3], IShader &shader, TGAImage &image, std::vector<double> &zbuffer);

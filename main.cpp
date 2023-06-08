@@ -5,12 +5,50 @@
 constexpr int width  = 800; // output image size
 constexpr int height = 800;
 constexpr vec3 light_dir{1,1,1}; // light source
-constexpr vec3       eye{1,1,3}; // camera position
+constexpr vec3       eye{0,0,3}; // camera position
 constexpr vec3    center{0,0,0}; // camera direction
 constexpr vec3        up{0,1,0}; // camera up vector
 
 extern mat<4,4> ModelView; // "OpenGL" state matrices
 extern mat<4,4> Projection;
+
+float BoxX[2] = {-100, 100};
+float BoxY[2] = {-100, 200};
+float BoxZ[2] = {-100, 50};
+
+vec3 BoxColor[2][2][2] = {
+    {{{0,0,0},{255,0,0}},
+    {{0,255,0},{255,255,0}}},
+    {{{0,0,255},{255,0,255}},
+    {{0,255,255},{255,255,255}}}
+};
+
+
+vec3 cloudColor(vec3 p)
+{
+    // std::cout << p << std::endl;
+    // return vec3{255, 255, 55};
+    if (p.x<BoxX[0]||p.x>BoxX[1]||p.y<BoxY[0]||p.y>BoxY[1]||p.z<BoxZ[0]||p.z>BoxZ[1])return vec3{};//vec3{255,255,255};
+    float fx = (p.x - BoxX[0])/(BoxX[1]-BoxX[0]);
+    float fy = (p.y - BoxY[0])/(BoxY[1]-BoxY[0]);
+    float fz = (p.z - BoxZ[0])/(BoxZ[1]-BoxZ[0]);
+    vec3 c1[2][2];
+    vec3 c2[2];
+    for(int i : {0,1})
+    {
+        for(int j : {0,1})
+        {
+            c1[i][j]=fx * BoxColor[0][i][j] + (1-fx) * BoxColor[1][i][j];
+        }
+    }
+    for(int i : {0,1})
+    {
+        c2[i] = fy * c1[0][i] + (1-fy) * c1[1][i];
+    }
+    return fz * c2[0] + (1-fz) * c2[1];
+    // return vec3{255, 255, 255};
+    // return vec3{255, 255, 255} * (100*100-p*p>0 ? (100*100-p*p)/10000 : 0);
+}
 
 struct Shader : IShader {
     const Model &model;
@@ -29,9 +67,10 @@ struct Shader : IShader {
         gl_Position= ModelView*embed<4>(model.vert(iface, nthvert));
         view_tri.set_col(nthvert, proj<3>(gl_Position));
         gl_Position = Projection*gl_Position;
+        // std::cout << gl_Position << " ";
     }
 
-    virtual bool fragment(const vec3 bar, TGAColor &gl_FragColor) {
+    virtual bool fragment(const vec2 fragCoord, const vec3 bar, TGAColor &gl_FragColor) {
         vec3 bn = (varying_nrm*bar).normalized(); // per-vertex normal interpolation
         vec2 uv = varying_uv*bar; // tex coord interpolation
 
@@ -50,8 +89,52 @@ struct Shader : IShader {
         TGAColor c = sample2D(model.diffuse(), uv);
         for (int i : {0,1,2})
             gl_FragColor[i] = std::min<int>(10 + c[i]*(diff + spec), 255); // (a bit of ambient light, diff + spec), clamp the result
-
+            
+ 
         return false; // the pixel is not discarded
+    }
+
+    static void mainImage(const vec2 fragCoord, TGAColor &gl_FragColor)
+    {
+        for (int i : {0,1,2})
+        //     std::cout << gl_FragColor[i] << " ";
+            gl_FragColor[i] = 100;
+
+        // if (fragCoord*fragCoord<100*100)
+        // for (int i : {0,1,2})
+        //     gl_FragColor[i] = 200;
+        // return;
+        const int MAX_STEPS = 1000;
+        const float MAX_DIST = 10.0;
+        const float alpha = 0.99;
+        vec3 rayDirection{fragCoord.x, fragCoord.y, 0.0};
+        // std::cout << rayDirection << ";";
+        vec3 p{0, 0, 200};
+        rayDirection = rayDirection - p;
+        rayDirection = rayDirection.normalized();
+        for (int i=0; i<MAX_STEPS; i++)
+        {
+            p = p + rayDirection;
+            if (p.z<-200)break;
+            vec3 color = cloudColor(p); 
+            // if(color.x>0)
+            //     std::cout << color << ";";
+            // for (int i : {0, 1, 2})
+            //     std::cout << gl_FragColor[i] << " ";
+            // if(100*100-p*p>0)//std::cout<<"!";
+            for (int i : {0, 1, 2})
+                // gl_FragColor[i] = gl_FragColor[i] * alpha + color[i] * (1-alpha) ;
+                gl_FragColor[i] = gl_FragColor[i] * (gl_FragColor[0]/255.0) + color[i] * (1-gl_FragColor[0]/255.0);
+                // gl_FragColor[i] = color[i];
+                // gl_FragColor[i] = 255.0 * (100*100-p*p)/10000;
+                // if(color.x>0)break;
+        }
+
+            // for (int i : {0})
+            //     std::cout << gl_FragColor[i] << " ";
+                // gl_FragColor[i] = 0.5;
+        // int k;
+        // std::cin >> k;
     }
 };
 
@@ -66,17 +149,26 @@ int main(int argc, char** argv) {
     projection((eye-center).norm());                    // build the Projection matrix
     std::vector<double> zbuffer(width*height, std::numeric_limits<double>::max());
 
-    for (int m=1; m<argc; m++) { // iterate through all input objects
-        Model model(argv[m]);
-        Shader shader(model);
-        for (int i=0; i<model.nfaces(); i++) { // for every triangle
-            vec4 clip_vert[3]; // triangle coordinates (clip coordinates), written by VS, read by FS
-            for (int j : {0,1,2})
-                shader.vertex(i, j, clip_vert[j]); // call the vertex shader for each triangle vertex
-            triangle(clip_vert, shader, framebuffer, zbuffer); // actual rasterization routine call
+    // for (int m=1; m<argc; m++) { // iterate through all input objects
+    //     Model model(argv[m]);
+    //     Shader shader(model);
+    //     for (int i=0; i<model.nfaces(); i++) { // for every triangle
+    //         vec4 clip_vert[3]; // triangle coordinates (clip coordinates), written by VS, read by FS
+    //         for (int j : {0,1,2})
+    //             shader.vertex(i, j, clip_vert[j]); // call the vertex shader for each triangle vertex
+    //         triangle(clip_vert, shader, framebuffer, zbuffer); // actual rasterization routine call
+    //     }
+    // }
+    for (int x=0; x<=framebuffer.width()-1; x++) {
+        for (int y=0; y<=framebuffer.height()-1; y++) {
+            TGAColor color;
+            Shader::mainImage(vec2{(double)(x-framebuffer.width()/2), (double)(y-framebuffer.height()/2)}, color);
+            framebuffer.set(x, y, color);
         }
     }
+
     framebuffer.write_tga_file("framebuffer.tga");
+    std::cout << "framebuffer.tga" << std::endl;
     return 0;
 }
 
